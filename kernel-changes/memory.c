@@ -95,6 +95,17 @@ EXPORT_SYMBOL(mem_map);
 #endif
 
 /*
+ * OS Semester Project
+ * Get difference between timespecs
+ */
+uint64_t get_time_diff(struct timespec *begin, struct timespec *end)
+{
+	return (end->tv_sec * 1000000000 + end->tv_nsec) -
+		(begin->tv_sec * 1000000000 + begin->tv_nsec);
+}
+
+
+/*
  * A number of key systems in x86 including ioremap() rely on the assumption
  * that high_memory defines the upper bound on direct map memory, then end
  * of ZONE_NORMAL.  Under CONFIG_DISCONTIG this means that max_low_pfn and
@@ -4003,8 +4014,9 @@ static int extra_anon_pte_alloc(struct vm_fault *vmf, unsigned long new_addr)
 	struct timespec t1, t2;
 	unsigned long time_taken;
 
-	/* Start partial page walk timer */
-	ktime_get_real_ts(&t1);		
+	/* Start page walk timer */
+	if(vma->time_vma)
+		ktime_get_real_ts(&t1);		
 
 	/* Determine if the extra page has been reserved */
 	if (new_addr + PAGE_SIZE > vma->vm_end) {
@@ -4028,11 +4040,12 @@ static int extra_anon_pte_alloc(struct vm_fault *vmf, unsigned long new_addr)
 	if (pmd_none(*pmd2) || unlikely(pmd_bad(*pmd2)))
 		return -1;
 
-	/* End partial pagewalk timer */
-	ktime_get_real_ts(&t2);
-	time_taken = get_time_diff(&t1, &t2);
-	mm->partial_walk_time += time_taken;
-	// printk("Extra walk: %lu ns\n", time_taken);
+	/* End page walk timer */
+	if(vma->time_vma){
+		ktime_get_real_ts(&t2);
+		time_taken = get_time_diff(&t1, &t2);
+		mm->page_walk_time += time_taken;
+	}
 
 	/* Copy parameters from the original vmf to a new one */
 	vmf2.vma = vmf->vma;
@@ -4248,16 +4261,9 @@ static vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 	struct timespec t1, t2, t3;
 	unsigned long time_taken;
 
-	// if(vma->mmu_invalidation_safe == 1){
-	// 	// printk("inval safe\n");
-	// 	mmu_notifier_invalidate_range_start(mm, vma->vm_start, vma->vm_end);
-	// 	mmu_notifier_invalidate_range_end(mm, vma->vm_start, vma->vm_end);
-	// }
-	// flush_cache_mm(mm);
-	// flush_cache_vmap(0, 0xffffffffffffffff);
-
-	/* Start partial page walk timer */
-	ktime_get_real_ts(&t1);		
+	/* Start page walk timer */
+	if(vma->time_vma)
+		ktime_get_real_ts(&t1);		
 
 	pgd = pgd_offset(mm, address);
 	p4d = p4d_alloc(mm, pgd, address);
@@ -4323,17 +4329,21 @@ static vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 		}
 	}
 
-	/* End partial pagewalk timer */
-	ktime_get_real_ts(&t2);
-	time_taken = get_time_diff(&t1, &t2);
-	mm->partial_walk_time += time_taken;		
+	/* End page walk timer */
+	if(vma->time_vma){
+		ktime_get_real_ts(&t2);
+		time_taken = get_time_diff(&t1, &t2);
+		mm->page_walk_time += time_taken;
+	}		
 
 	ret = handle_pte_fault(&vmf);
 
 	/* End page fault timer */
-	ktime_get_real_ts(&t3);
-	time_taken = get_time_diff(&t2, &t3);
-	mm->full_walk_time += time_taken;
+	if(vma->time_vma){
+		ktime_get_real_ts(&t2);
+		time_taken = get_time_diff(&t1, &t2);
+		mm->page_fault_time += time_taken;
+	}
 
 	return ret;
 }
@@ -4348,6 +4358,12 @@ vm_fault_t handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 		unsigned int flags)
 {
 	vm_fault_t ret;
+
+	/*
+	 * OS Semester Project Edit:
+	 * Prefetch if condition
+	 */
+	prefetchw(&(vma->time_vma));
 
 	__set_current_state(TASK_RUNNING);
 
@@ -4542,11 +4558,6 @@ static int __follow_pte_pmd(struct mm_struct *mm, unsigned long address,
 	*ptepp = ptep;
 
 ret0:
-	/* End partial pagewalk timer */
-	ktime_get_real_ts(&t2);
-	time_taken = get_time_diff(&t1, &t2);
-	mm->partial_walk_time += time_taken;
-
 	return 0;
 
 unlock:
@@ -4555,11 +4566,6 @@ unlock:
 		mmu_notifier_invalidate_range_end(mm, *start, *end);
 		
 out:
-	/* End partial pagewalk timer */
-	ktime_get_real_ts(&t2);
-	time_taken = get_time_diff(&t1, &t2);
-	mm->partial_walk_time += time_taken;
-
 	return -EINVAL;
 }
 

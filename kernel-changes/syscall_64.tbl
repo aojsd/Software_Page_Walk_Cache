@@ -350,10 +350,10 @@
 
 # OS Semester Project Syscalls
 337 common  mm_param_reset              __x64_sys_mm_param_reset
-338 common  set_mmu_invalidate_count    __x64_sys_set_mmu_invalidate_count
+338 common  get_jiffies                 __x64_sys_get_jiffies
 339 common  mmap_mmu_invalidate         __x64_sys_mmap_mmu_invalidate
-340 common  get_partial_walk_time       __x64_sys_get_partial_walk_time
-341 common  get_full_walk_time          __x64_sys_get_full_walk_time
+340 common  get_page_walk_time          __x64_sys_get_page_walk_time
+341 common  get_page_fault_time          __x64_sys_get_page_fault_time
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact

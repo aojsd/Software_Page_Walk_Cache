@@ -297,6 +297,12 @@ struct vm_area_struct {
 	} shared;
 
 	/*
+	 * OS Semester Project Edit:
+	 * Variable indicates vma should be open for timing
+	 */
+	int time_vma;
+
+	/*
 	 * A file's MAP_PRIVATE vma can be in both i_mmap tree and anon_vma
 	 * list, after a COW of one of the file pages.	A MAP_SHARED vma
 	 * can only be in the i_mmap tree.  An anonymous MAP_PRIVATE, stack
@@ -324,13 +330,6 @@ struct vm_area_struct {
 #endif
 	struct vm_userfaultfd_ctx vm_userfaultfd_ctx;
 
-	/*
-	 * OS Semester Project Edit
-	 * Extra fields for MMU notifier invalidation tests.
-	 */
-	int mmu_invalidation_safe;
-	int num_faults;
-	
 } __randomize_layout;
 
 struct core_thread {
@@ -509,12 +508,10 @@ struct mm_struct {
 
 	/*
 	 * OS Semester Project Edit:
-	 * Timer values for time spent in both full and partial page walks.
-	 * Parameter for determining how often to invalidate the MMU page table
+	 * Timer values for time spent in page walks for faults.
 	 */
-	unsigned long partial_walk_time;
-	unsigned long full_walk_time;
-	int mmu_invalidation_countdown;
+	unsigned long page_walk_time;
+	unsigned long page_fault_time;
 	
 	/*
 	 * The mm_cpumask needs to be at the end of mm_struct, because it

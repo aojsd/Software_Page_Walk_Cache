@@ -15,17 +15,18 @@
 #define GB                  (size_t) (1024*1024*1024)
 #define PAGE_SIZE           4096
 #define NUM_ACCESSES        (GB/PAGE_SIZE - 2)
-#define NUM_ACCESSES_RAND   1000
+#define NUM_ACCESSES_RAND   200
 
 #define MM_MULTI_ALLOC  336
 #define MM_PARAM_RESET  337
-#define MMU_INV_COUNT   338
+#define GET_JIFFIES     338
 #define MMAP_MMU_INV    339
-#define PARTIAL_WALK_T  340
-#define FULL_WALK_T     341
+#define PAGE_WALK_T     340
+#define PAGE_FAULT_T    341
 
 struct timespec n1, n2;
 uint64_t total_time;
+uint64_t j_start, j_end;
 char* array;
 char accesses[NUM_ACCESSES];
 
@@ -54,10 +55,7 @@ void seq_access(){
 int main(int argc, char** argv)
 {
     srand(time(NULL));
-    for(int i = 0; i < NUM_ACCESSES_RAND; i++){
-        accesses[i] = rand() % (GB - PAGE_SIZE);
-    }
-
+    
     syscall(MM_PARAM_RESET);
 
     // Check command line arguments
@@ -67,6 +65,7 @@ int main(int argc, char** argv)
     }
 
     // Determine page multi alloc parameter
+    //Rand_param 0->sequential,1->random,2->semirandom
     int multi_alloc, ret, rand_param;
     sscanf(argv[1], "%d", &multi_alloc);
     sscanf(argv[2], "%d", &rand_param);
@@ -84,29 +83,58 @@ int main(int argc, char** argv)
         return -1;
     }
 
+    // Moved code down here to differentiate random and semi random
+    if(rand_param == 2){
+        for(int i = 0; i < NUM_ACCESSES_RAND; i+=4){
+            accesses[i] = rand() % (GB - PAGE_SIZE);
+            int j = i;
+            int semiRandAccesses = accesses[i];
+            for(j = i; (j < i+4) && (j < NUM_ACCESSES_RAND); j++){
+                semiRandAccesses += PAGE_SIZE;
+                semiRandAccesses = semiRandAccesses % (GB - 2 * PAGE_SIZE);
+                accesses[j] =  semiRandAccesses;
+            }
+        }   
+    }
+    else{
+        for(int i = 0; i < NUM_ACCESSES_RAND; i++){
+            accesses[i] = rand() % (GB - 2 * PAGE_SIZE);
+        }
+    }
+
     // Start timer
     clock_gettime(CLOCK_REALTIME, &n1);
 
     // Select random or sequential accesses
-    if(!rand_param){
+    if(rand_param == 0){
+        // printf("seq\n");
         seq_access();
-        goto end;
+    }
+    else if(rand_param == 1){
+        // printf("rand 1\n");
+        for(int i = 0; i < NUM_ACCESSES_RAND; i++){
+            int access = accesses[i];
+            array[i] = 1;
+        }
+    }
+    else {
+        // printf("rand 2\n");
+        for(int i = 0; i < NUM_ACCESSES_RAND; i++){
+            int access = accesses[i];
+            array[i] = 1;
+        }        
     }
 
-    for(int i = 0; i < NUM_ACCESSES_RAND; i++){
-        int access = accesses[i];
-        array[i] = 1;
-    }
+
 
     // End timer
-end:
     clock_gettime(CLOCK_REALTIME, &n2);
     munmap(array, GB - PAGE_SIZE);
 
     // Calculate total time
     uint64_t total_time = gettimediff(&n1, &n2);    
-    uint64_t pwalk_time = syscall(PARTIAL_WALK_T);
-    uint64_t fwalk_time = syscall(FULL_WALK_T);
+    uint64_t pwalk_time = syscall(PAGE_WALK_T);
+    uint64_t fwalk_time = syscall(PAGE_FAULT_T);
 
     double pwalk_frac = (double) pwalk_time / total_time;
     double fwalk_frac = (double) fwalk_time / total_time;

@@ -1128,10 +1128,10 @@ asmlinkage long sys_page_multi_alloc(int);
  * OS Semester Project System Calls
  */
 asmlinkage long sys_mm_param_reset(void);
-asmlinkage long sys_set_mmu_invalidate_count(int);
+asmlinkage unsigned long sys_get_jiffies(void));
 asmlinkage unsigned long sys_mmap_mmu_invalidate(void);
-asmlinkage unsigned long sys_get_partial_walk_time(void);
-asmlinkage unsigned long sys_get_full_walk_time(void);
+asmlinkage unsigned long sys_get_page_walk_time(void);
+asmlinkage unsigned long sys_get_page_fault_time(void);
 
 #endif /* CONFIG_ARCH_HAS_SYSCALL_WRAPPER */
 

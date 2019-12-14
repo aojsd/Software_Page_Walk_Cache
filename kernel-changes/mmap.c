@@ -46,6 +46,7 @@
 #include <linux/pkeys.h>
 #include <linux/oom.h>
 #include <linux/sched/mm.h>
+#include <linux/jiffies.h>
 
 #include <linux/uaccess.h>
 #include <asm/cacheflush.h>
@@ -1599,7 +1600,7 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 	vma = find_vma(current->mm, ret_addr);
 
 	if(vma)
-		vma->mmu_invalidation_safe = 0;
+		vma->time_vma = 0;
 		
 	return ret_addr;
 }
@@ -3756,22 +3757,17 @@ SYSCALL_DEFINE0(mm_param_reset)
 {
 	struct mm_struct *mm = current->mm;
 	mm->multi_alloc = 1;
-	mm->partial_walk_time = 0;
-	mm->full_walk_time = 0;
-	mm->mmu_invalidation_countdown = 64;
+	mm->page_walk_time = 0;
 	return 0;
 }
 
 /*
- * OS Semester Project Set MMU count System Call
- * Sets the number of page faults per vma until the MMU page table
- * for that vma is invalidated (if safe)
+ * OS Semester Project Get Jiffies System Call
+ * Gets the current jiffies count
  */
-SYSCALL_DEFINE1(set_mmu_invalidate_count, int, count)
+SYSCALL_DEFINE0(get_jiffies)
 {
-	struct mm_struct *mm = current->mm;
-	mm->mmu_invalidation_countdown = count;
-	return 0;
+	return jiffies;
 }
 
 /*
@@ -3787,8 +3783,7 @@ SYSCALL_DEFINE6(mmap_mmu_invalidate, unsigned long, addr, unsigned long, len,
 	vma = find_vma(current->mm, ret_addr);
 
 	if(vma){
-		vma->mmu_invalidation_safe = 1;
-		vma->num_faults = 0;
+		vma->time_vma = 1;
 	}
 
 	return ret_addr;
@@ -3798,14 +3793,14 @@ SYSCALL_DEFINE6(mmap_mmu_invalidate, unsigned long, addr, unsigned long, len,
  * OS Semester Project Get Walk Time System Calls
  * Return time spent in the respective page walk
  */
-SYSCALL_DEFINE0(get_partial_walk_time)
+SYSCALL_DEFINE0(get_page_walk_time)
 {
 	struct mm_struct *mm = current->mm;
-	return mm->partial_walk_time;
+	return mm->page_walk_time;
 }
 
-SYSCALL_DEFINE0(get_full_walk_time)
+SYSCALL_DEFINE0(get_page_fault_time)
 {
 	struct mm_struct *mm = current->mm;
-	return mm->full_walk_time;
+	return mm->page_fault_time;
 }
