@@ -1128,10 +1128,18 @@ asmlinkage long sys_page_multi_alloc(int);
  * OS Semester Project System Calls
  */
 asmlinkage long sys_mm_param_reset(void);
-asmlinkage unsigned long sys_get_jiffies(void));
-asmlinkage unsigned long sys_mmap_mmu_invalidate(void);
+asmlinkage unsigned long sys_vma_enable_cache(unsigned long addr);
+asmlinkage unsigned long sys_mmap_enable_timer(unsigned long addr, unsigned long len,
+			unsigned long prot, unsigned long flags,
+			unsigned long fd, unsigned long pgoff);
 asmlinkage unsigned long sys_get_page_walk_time(void);
 asmlinkage unsigned long sys_get_page_fault_time(void);
+asmlinkage unsigned long sys_get_pmd_cache_hits(unsigned long addr);
+asmlinkage unsigned long sys_get_pmd_cache_misses(unsigned long addr);
+asmlinkage unsigned long sys_get_pud_cache_hits(unsigned long addr);
+asmlinkage unsigned long sys_get_pud_cache_misses(unsigned long addr);
+asmlinkage unsigned long sys_get_p4d_cache_hits(unsigned long addr);
+asmlinkage unsigned long sys_get_p4d_cache_misses(unsigned long addr);
 
 #endif /* CONFIG_ARCH_HAS_SYSCALL_WRAPPER */
 

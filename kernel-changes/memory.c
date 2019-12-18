@@ -4257,80 +4257,165 @@ static vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 	pgd_t *pgd;
 	p4d_t *p4d;
 	vm_fault_t ret;
-
-	struct timespec t1, t2, t3;
+	struct timespec t1, t2;
 	unsigned long time_taken;
 
-	/* Start page walk timer */
-	if(vma->time_vma)
-		ktime_get_real_ts(&t1);		
+	unsigned short pgd_index = pgd_index(address);
+	unsigned short p4d_index = (address >> P4D_SHIFT) & (PTRS_PER_P4D - 1);
+	unsigned short pud_index = (address >> PUD_SHIFT) & (PTRS_PER_PUD - 1);
+	unsigned short pmd_index = (address >> PMD_SHIFT) & (PTRS_PER_PMD - 1);
 
+	unsigned short pgd_cache_index = pgd_index & (PWC_ENTRIES - 1);
+	unsigned short p4d_cache_index = p4d_index & (PWC_ENTRIES - 1);
+	unsigned short pud_cache_index = pud_index & (PWC_ENTRIES - 1);
+	unsigned short pmd_cache_index = pmd_index & (PWC_ENTRIES - 1);
+
+	prefetchw(vma->pmd_cache[pmd_cache_index]);
+	prefetchw(vma->pud_cache[pud_cache_index]);
+	prefetchw(vma->p4d_cache[p4d_cache_index]);
+
+	bool p4d_hit = 0;
+	bool pud_hit = 0;
+	bool pmd_hit = 0;
+
+	/* Start page walk timer */
+	if(unlikely(vma->time_vma)){
+		ktime_get_real_ts(&t1);
+	}
+
+	/* Check for a page walk cache hit */
+	if(vma->cache_vma){
+		if(address == vma->last_addr){
+			goto walk;
+		}
+
+		/* Check for a pmd (best case) hit first */
+		if(	(pgd_index == vma->pgd_tags[pgd_cache_index]) &&
+			(p4d_index == vma->p4d_tags[p4d_cache_index]) &&
+			(pud_index == vma->pud_tags[pud_cache_index]) &&
+			(pmd_index == vma->pmd_tags[pmd_cache_index]))
+		{
+			vmf.pmd = vma->pmd_cache[pmd_cache_index];
+
+			/* Check that the cached page is valid, else invalidate cache entry */
+			if(vmf.pmd){
+				if( !(pmd_none(*vmf.pmd) || pmd_bad(*vmf.pmd)) ){
+					pmd_hit = 1;
+					goto check;
+				}				
+			}
+		}
+
+		/* Check for a pud hit */
+		if( (pgd_index == vma->pgd_tags[pgd_cache_index]) &&
+			(p4d_index == vma->p4d_tags[p4d_cache_index]) &&
+			(pud_index == vma->pud_tags[pud_cache_index]))
+		{
+			vmf.pud = vma->pud_cache[pud_cache_index];
+
+			/* Check that the cached page is valid, else invalidate cache entry */
+			if(vmf.pud){
+				if( !(pud_none(*vmf.pud) || pud_bad(*vmf.pud)) ){
+					pud_hit = 1;
+					goto pmd_walk;
+				}				
+			}			
+		}
+
+		/* Check for a p4d hit */
+		if( (pgd_index == vma->pgd_tags[pgd_cache_index]) &&
+			(p4d_index == vma->p4d_tags[p4d_cache_index]))
+		{
+			p4d = vma->p4d_cache[p4d_cache_index];
+
+			/* Check that the cached page is valid, else invalidate cache entry */
+			if(p4d){
+				if( !(p4d_none(*p4d) || p4d_bad(*p4d)) ){
+					p4d_hit = 1;
+					goto pud_walk;
+				}				
+			}			
+		}		
+	}
+
+walk:
 	pgd = pgd_offset(mm, address);
 	p4d = p4d_alloc(mm, pgd, address);
 	if (!p4d)
 		return VM_FAULT_OOM;
 
+pud_walk:
 	vmf.pud = pud_alloc(mm, p4d, address);
 	if (!vmf.pud)
 		return VM_FAULT_OOM;
-	if (pud_none(*vmf.pud) && transparent_hugepage_enabled(vma)) {
-		ret = create_huge_pud(&vmf);
-		if (!(ret & VM_FAULT_FALLBACK))
-			return ret;
-	} else {
-		pud_t orig_pud = *vmf.pud;
 
-		barrier();
-		if (pud_trans_huge(orig_pud) || pud_devmap(orig_pud)) {
+	/* OS Semester Project - Disallow huge pages for tests */
+	if (!vma->time_vma){
+		if (pud_none(*vmf.pud) && transparent_hugepage_enabled(vma)) {
+			ret = create_huge_pud(&vmf);
+			if (!(ret & VM_FAULT_FALLBACK))
+				return ret;
+		} else {
+			pud_t orig_pud = *vmf.pud;
 
-			/* NUMA case for anonymous PUDs would go here */
-
-			if (dirty && !pud_write(orig_pud)) {
-				ret = wp_huge_pud(&vmf, orig_pud);
-				if (!(ret & VM_FAULT_FALLBACK))
-					return ret;
-			} else {
-				huge_pud_set_accessed(&vmf, orig_pud);
-				return 0;
+			barrier();
+			if (pud_trans_huge(orig_pud) || pud_devmap(orig_pud)) {
+				/* NUMA case for anonymous PUDs would go here */
+				if (dirty && !pud_write(orig_pud)) {
+					ret = wp_huge_pud(&vmf, orig_pud);
+					if (!(ret & VM_FAULT_FALLBACK))
+						return ret;
+				} else {
+					huge_pud_set_accessed(&vmf, orig_pud);
+					return 0;
+				}
 			}
 		}
 	}
-
+pmd_walk:	
 	vmf.pmd = pmd_alloc(mm, vmf.pud, address);
+
+check:
 	if (!vmf.pmd)
 		return VM_FAULT_OOM;
-	if (pmd_none(*vmf.pmd) && transparent_hugepage_enabled(vma)) {
-		ret = create_huge_pmd(&vmf);
-		if (!(ret & VM_FAULT_FALLBACK))
-			return ret;
-	} else {
-		pmd_t orig_pmd = *vmf.pmd;
 
-		barrier();
-		if (unlikely(is_swap_pmd(orig_pmd))) {
-			VM_BUG_ON(thp_migration_supported() &&
-					  !is_pmd_migration_entry(orig_pmd));
-			if (is_pmd_migration_entry(orig_pmd))
-				pmd_migration_entry_wait(mm, vmf.pmd);
-			return 0;
-		}
-		if (pmd_trans_huge(orig_pmd) || pmd_devmap(orig_pmd)) {
-			if (pmd_protnone(orig_pmd) && vma_is_accessible(vma))
-				return do_huge_pmd_numa_page(&vmf, orig_pmd);
+	/* OS Semester Project - Disallow huge pages for tests */
+	if (!vma->time_vma){
+		if (pmd_none(*vmf.pmd) && transparent_hugepage_enabled(vma)) {
+			ret = create_huge_pmd(&vmf);
+			if (!(ret & VM_FAULT_FALLBACK))
+				return ret;
+		} else {
+			pmd_t orig_pmd = *vmf.pmd;
 
-			if (dirty && !pmd_write(orig_pmd)) {
-				ret = wp_huge_pmd(&vmf, orig_pmd);
-				if (!(ret & VM_FAULT_FALLBACK))
-					return ret;
-			} else {
-				huge_pmd_set_accessed(&vmf, orig_pmd);
+			barrier();
+			if (unlikely(is_swap_pmd(orig_pmd))) {
+				VM_BUG_ON(thp_migration_supported() &&
+						!is_pmd_migration_entry(orig_pmd));
+				if (is_pmd_migration_entry(orig_pmd))
+					pmd_migration_entry_wait(mm, vmf.pmd);
 				return 0;
+			}
+			if (pmd_trans_huge(orig_pmd) || pmd_devmap(orig_pmd)) {
+				if (pmd_protnone(orig_pmd) && vma_is_accessible(vma)){
+					ret = do_huge_pmd_numa_page(&vmf, orig_pmd);
+					return ret;
+				}
+				if (dirty && !pmd_write(orig_pmd)) {
+					ret = wp_huge_pmd(&vmf, orig_pmd);
+					if (!(ret & VM_FAULT_FALLBACK)){
+						return ret;
+					}
+				} else {
+					huge_pmd_set_accessed(&vmf, orig_pmd);
+					return 0;
+				}
 			}
 		}
 	}
 
 	/* End page walk timer */
-	if(vma->time_vma){
+	if(unlikely(vma->time_vma)){
 		ktime_get_real_ts(&t2);
 		time_taken = get_time_diff(&t1, &t2);
 		mm->page_walk_time += time_taken;
@@ -4339,10 +4424,37 @@ static vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 	ret = handle_pte_fault(&vmf);
 
 	/* End page fault timer */
-	if(vma->time_vma){
+	if(unlikely(vma->time_vma)){
 		ktime_get_real_ts(&t2);
 		time_taken = get_time_diff(&t1, &t2);
 		mm->page_fault_time += time_taken;
+	}
+
+	if(vma->cache_vma){
+		/* Update cache */
+		vma->pgd_tags[pgd_cache_index] = pgd_index;
+		vma->p4d_tags[p4d_cache_index] = p4d_index;
+		vma->pud_tags[pud_cache_index] = pud_index;
+		vma->pmd_tags[pmd_cache_index] = pmd_index;
+
+		/* p4d does not get set on a pmd or pud hit */
+		if(!pmd_hit && !pud_hit)
+			vma->p4d_cache[p4d_cache_index] = p4d;
+
+		/* vmf pud does not get set on a pmd hit */
+		if(!pmd_hit)
+			vma->pud_cache[pud_cache_index] = vmf.pud;
+		vma->pmd_cache[pmd_cache_index] = vmf.pmd;
+
+		/* Cache statistics */
+		vma->pmd_hits += pmd_hit;
+		vma->pmd_misses += !pmd_hit;
+		vma->pud_hits += pud_hit;
+		vma->pud_misses += (!pud_hit && !pmd_hit);
+		vma->p4d_hits += p4d_hit;
+		vma->p4d_misses += (!p4d_hit && !pud_hit && !pmd_hit);
+
+		vma->last_addr = address;
 	}
 
 	return ret;
@@ -4359,12 +4471,6 @@ vm_fault_t handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 {
 	vm_fault_t ret;
 
-	/*
-	 * OS Semester Project Edit:
-	 * Prefetch if condition
-	 */
-	prefetchw(&(vma->time_vma));
-
 	__set_current_state(TASK_RUNNING);
 
 	count_vm_event(PGFAULT);
@@ -4372,6 +4478,21 @@ vm_fault_t handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 
 	/* do counter updates before entering really critical section. */
 	check_sync_rss_stat(current);
+
+	/*
+	 * OS Semester Project Edit:
+	 * Prefetch if conditions and variables
+	 */
+	prefetchw(&vma->time_vma);
+	prefetchw(&vma->cache_vma);
+	prefetchw(&vma->pgd_tags);
+	prefetchw(&vma->p4d_tags);
+	prefetchw(&vma->pud_tags);
+	prefetchw(&vma->pmd_tags);
+
+	prefetchw(&vma->pmd_cache);
+	prefetchw(&vma->pud_cache);
+	prefetchw(&vma->p4d_cache);
 
 	if (!arch_vma_access_permitted(vma, flags & FAULT_FLAG_WRITE,
 					    flags & FAULT_FLAG_INSTRUCTION,
@@ -4503,11 +4624,6 @@ static int __follow_pte_pmd(struct mm_struct *mm, unsigned long address,
 	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *ptep;
-	struct timespec t1, t2;
-	unsigned long time_taken;
-
-	/* Start partial page walk timer */
-	ktime_get_real_ts(&t1);	
 
 	pgd = pgd_offset(mm, address);
 	if (pgd_none(*pgd) || unlikely(pgd_bad(*pgd)))

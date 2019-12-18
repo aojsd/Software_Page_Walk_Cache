@@ -256,6 +256,15 @@ struct vm_userfaultfd_ctx {};
 #endif /* CONFIG_USERFAULTFD */
 
 /*
+ * OS Semester Project Edit:
+ * Make page walk cache sizes parametrizable
+ * Goes up to 9 bit indexing because page offsets are 9 bits for a 
+ * 5 level page table.
+ */
+#define PWC_INDEX_BITS	4
+#define PWC_ENTRIES		(1 << PWC_INDEX_BITS)
+
+/*
  * This struct defines a memory VMM memory area. There is one of these
  * per VM-area/task.  A VM area is any part of the process virtual memory
  * space that has a special rule for the page-fault handlers (ie a shared
@@ -297,12 +306,6 @@ struct vm_area_struct {
 	} shared;
 
 	/*
-	 * OS Semester Project Edit:
-	 * Variable indicates vma should be open for timing
-	 */
-	int time_vma;
-
-	/*
 	 * A file's MAP_PRIVATE vma can be in both i_mmap tree and anon_vma
 	 * list, after a COW of one of the file pages.	A MAP_SHARED vma
 	 * can only be in the i_mmap tree.  An anonymous MAP_PRIVATE, stack
@@ -329,6 +332,45 @@ struct vm_area_struct {
 	struct mempolicy *vm_policy;	/* NUMA policy for the VMA */
 #endif
 	struct vm_userfaultfd_ctx vm_userfaultfd_ctx;
+
+	/*
+	 * OS Semester Project Edit:
+	 * Variables indicate whether vma should be open for timing and
+	 * whether software page walk cache should be used
+	 */
+	int time_vma;
+	int cache_vma;
+
+	/*
+	 * OS Semester Project Edit:
+	 * Page walk cache statistics
+	 */
+	unsigned long pmd_hits;
+	unsigned long pmd_misses;
+	unsigned long pud_hits;
+	unsigned long pud_misses;	
+	unsigned long p4d_hits;
+	unsigned long p4d_misses;
+
+	unsigned long last_addr;
+
+	/*
+	 * OS Semester Project Edit:
+	 * Tag Cache (holds previously seen pgd, p4d, and pud indexes)
+	 * MSB will indicate validity
+	 */
+	unsigned short pgd_tags[PWC_ENTRIES];
+	unsigned short p4d_tags[PWC_ENTRIES];
+	unsigned short pud_tags[PWC_ENTRIES];
+	unsigned short pmd_tags[PWC_ENTRIES];
+
+	/*
+	 * OS Semester Project Edit:	
+	 * Page table entry caches, holds memory addresses for pmds, puds, p4ds
+	 */
+	pmd_t *pmd_cache[PWC_ENTRIES];
+	pud_t *pud_cache[PWC_ENTRIES];
+	p4d_t *p4d_cache[PWC_ENTRIES];
 
 } __randomize_layout;
 

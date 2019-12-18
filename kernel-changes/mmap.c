@@ -1599,8 +1599,10 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 	unsigned long ret_addr = ksys_mmap_pgoff(addr, len, prot, flags, fd, pgoff);
 	vma = find_vma(current->mm, ret_addr);
 
-	if(vma)
+	if(vma){
 		vma->time_vma = 0;
+		vma->cache_vma = 0;
+	}
 		
 	return ret_addr;
 }
@@ -3762,19 +3764,42 @@ SYSCALL_DEFINE0(mm_param_reset)
 }
 
 /*
- * OS Semester Project Get Jiffies System Call
- * Gets the current jiffies count
+ * OS Semester Project VMA_enable_cache System Call
+ * Enables the page walk cache for a vma
  */
-SYSCALL_DEFINE0(get_jiffies)
+SYSCALL_DEFINE1(vma_enable_cache, unsigned long, addr)
 {
-	return jiffies;
+	struct vm_area_struct *vma = find_vma(current->mm, addr);
+	vma->cache_vma = 1;
+
+	vma->pmd_hits = 0;
+	vma->pmd_misses = 0;
+	vma->pud_hits = 0;
+	vma->pud_misses = 0;
+	vma->p4d_hits = 0;
+	vma->p4d_misses = 0;	
+
+	/* Clear the page walk cache */
+	int i;
+	for(i = 0; i < PWC_ENTRIES; i++){
+		vma->pgd_tags[i] = 0;
+		vma->p4d_tags[i] = 0;
+		vma->pud_tags[i] = 0;
+		vma->pmd_tags[i] = 0;
+
+		vma->pmd_cache[i] = 0;
+		vma->pud_cache[i] = 0;
+		vma->p4d_cache[i] = 0;
+	}
+
+	return 0;
 }
 
 /*
  * OS Semester Project Set MMU count System Call
  * Indicates to map a vma marked as safe for mmu invalidations
  */
-SYSCALL_DEFINE6(mmap_mmu_invalidate, unsigned long, addr, unsigned long, len,
+SYSCALL_DEFINE6(mmap_enable_timer, unsigned long, addr, unsigned long, len,
 		unsigned long, prot, unsigned long, flags,
 		unsigned long, fd, unsigned long, pgoff)
 {
@@ -3784,6 +3809,7 @@ SYSCALL_DEFINE6(mmap_mmu_invalidate, unsigned long, addr, unsigned long, len,
 
 	if(vma){
 		vma->time_vma = 1;
+		vma->cache_vma = 0;
 	}
 
 	return ret_addr;
@@ -3803,4 +3829,44 @@ SYSCALL_DEFINE0(get_page_fault_time)
 {
 	struct mm_struct *mm = current->mm;
 	return mm->page_fault_time;
+}
+
+/*
+ * OS Semester Project
+ * System calls to get hits and misses in page walk cache
+ */
+SYSCALL_DEFINE1(get_pmd_cache_hits, unsigned long, addr)
+{
+	struct vm_area_struct *vma = find_vma(current->mm, addr);
+	return vma->pmd_hits;
+}
+
+SYSCALL_DEFINE1(get_pmd_cache_misses, unsigned long, addr)
+{
+	struct vm_area_struct *vma = find_vma(current->mm, addr);
+	return vma->pmd_misses;
+}
+
+SYSCALL_DEFINE1(get_pud_cache_hits, unsigned long, addr)
+{
+	struct vm_area_struct *vma = find_vma(current->mm, addr);
+	return vma->pud_hits;
+}
+
+SYSCALL_DEFINE1(get_pud_cache_misses, unsigned long, addr)
+{
+	struct vm_area_struct *vma = find_vma(current->mm, addr);
+	return vma->pud_misses;
+}
+
+SYSCALL_DEFINE1(get_p4d_cache_hits, unsigned long, addr)
+{
+	struct vm_area_struct *vma = find_vma(current->mm, addr);
+	return vma->p4d_hits;
+}
+
+SYSCALL_DEFINE1(get_p4d_cache_misses, unsigned long, addr)
+{
+	struct vm_area_struct *vma = find_vma(current->mm, addr);
+	return vma->p4d_misses;
 }

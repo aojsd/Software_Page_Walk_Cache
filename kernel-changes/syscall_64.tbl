@@ -350,10 +350,16 @@
 
 # OS Semester Project Syscalls
 337 common  mm_param_reset              __x64_sys_mm_param_reset
-338 common  get_jiffies                 __x64_sys_get_jiffies
-339 common  mmap_mmu_invalidate         __x64_sys_mmap_mmu_invalidate
+338 common  vma_enable_cache            __x64_sys_vma_enable_cache
+339 common  mmap_enable_timer           __x64_sys_mmap_enable_timer
 340 common  get_page_walk_time          __x64_sys_get_page_walk_time
-341 common  get_page_fault_time          __x64_sys_get_page_fault_time
+341 common  get_page_fault_time         __x64_sys_get_page_fault_time
+342 common  get_pmd_cache_hits          __x64_sys_get_pmd_cache_hits
+343 common  get_pmd_cache_misses        __x64_sys_get_pmd_cache_misses
+344 common  get_pud_cache_hits          __x64_sys_get_pud_cache_hits
+345 common  get_pud_cache_misses        __x64_sys_get_pud_cache_misses
+346 common  get_p4d_cache_hits          __x64_sys_get_p4d_cache_hits
+347 common  get_p4d_cache_misses        __x64_sys_get_p4d_cache_misses
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
