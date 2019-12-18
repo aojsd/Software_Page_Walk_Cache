@@ -15,20 +15,26 @@
 #define GB                  (size_t) (1024*1024*1024)
 #define PAGE_SIZE           4096
 #define NUM_ACCESSES        (GB/PAGE_SIZE - 2)
-#define NUM_ACCESSES_RAND   200
+#define NUM_ACCESSES_RAND   1000
 
 #define MM_MULTI_ALLOC  336
 #define MM_PARAM_RESET  337
-#define GET_JIFFIES     338
-#define MMAP_MMU_INV    339
+#define VMA_EN_CACHE    338
+#define MMAP_TIMER      339
 #define PAGE_WALK_T     340
 #define PAGE_FAULT_T    341
+#define PMD_HITS        342
+#define PMD_MISSES      343
+#define PUD_HITS        344
+#define PUD_MISSES      345
+#define P4D_HITS        346
+#define P4D_MISSES      347
 
 struct timespec n1, n2;
 uint64_t total_time;
 uint64_t j_start, j_end;
 char* array;
-char accesses[NUM_ACCESSES];
+unsigned long accesses[NUM_ACCESSES];
 
 /////////////////////////////////////////////////////////
 // Provides elapsed Time between t1 and t2 in nanoseconds
@@ -41,7 +47,7 @@ uint64_t gettimediff(struct timespec *begin, struct timespec *end)
 
 void seq_access(){
     // Access the array sequentially
-    for(int i = 0; i < GB - 2*PAGE_SIZE; i += PAGE_SIZE){
+    for(int i = 0; i < GB; i += 4*PAGE_SIZE){
         array[i] = 1;
     }
 }
@@ -54,21 +60,31 @@ void seq_access(){
 /////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
-    srand(time(NULL));
+    srand(time(0));
     
     syscall(MM_PARAM_RESET);
 
     // Check command line arguments
-    if(argc != 3){
+    if(argc != 4){
         printf("Invalid Arguments\n");
+        printf("Arg 1 - Multi-alloc Parameter\n");
+        printf("Arg 2 - Type of Access:\n"
+                "\t 0 for sequential\n"
+                "\t 1 for random\n"
+                "\t 2 for semi-random\n");
+        printf("Arg 3 - Page Walk Cache Enable:\n"
+                "\t 0 for disable\n"
+                "\t 1 for enable\n");
         return -1;
     }
 
     // Determine page multi alloc parameter
     //Rand_param 0->sequential,1->random,2->semirandom
-    int multi_alloc, ret, rand_param;
+    int multi_alloc, ret, rand_param, cache_en;
     sscanf(argv[1], "%d", &multi_alloc);
     sscanf(argv[2], "%d", &rand_param);
+    sscanf(argv[3], "%d", &cache_en);
+
     ret = syscall(MM_MULTI_ALLOC, multi_alloc);
     if(ret != multi_alloc){
         printf("multi alloc set failed\n");
@@ -76,19 +92,30 @@ int main(int argc, char** argv)
     }
 
     // Allocate a 1MB region of page-aligned memory using 4KB pages
-    array = (char*) syscall(MMAP_MMU_INV, NULL, GB - PAGE_SIZE, PROT_READ | PROT_WRITE,
+    array = (char*) syscall(MMAP_TIMER, NULL, GB, PROT_READ | PROT_WRITE,
                     MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
     if(array == MAP_FAILED){
-        perror("mmap1 failed");
+        perror("mmap failed");
         return -1;
+    }
+
+    if(cache_en == 1){
+        syscall(VMA_EN_CACHE, array);
+    }
+    else if (cache_en != 0){
+        printf("Invalid Cache Argument\n");
+        printf("Arg 3 - Page Walk Cache Enable:\n"
+                "\t 0 for disable\n"
+                "\t 1 for enable\n"); 
+        return -1;       
     }
 
     // Moved code down here to differentiate random and semi random
     if(rand_param == 2){
         for(int i = 0; i < NUM_ACCESSES_RAND; i+=4){
-            accesses[i] = rand() % (GB - PAGE_SIZE);
+            accesses[i] = rand() % (GB);
             int j = i;
-            int semiRandAccesses = accesses[i];
+            unsigned long semiRandAccesses = accesses[i];
             for(j = i; (j < i+4) && (j < NUM_ACCESSES_RAND); j++){
                 semiRandAccesses += PAGE_SIZE;
                 semiRandAccesses = semiRandAccesses % (GB - 2 * PAGE_SIZE);
@@ -98,7 +125,7 @@ int main(int argc, char** argv)
     }
     else{
         for(int i = 0; i < NUM_ACCESSES_RAND; i++){
-            accesses[i] = rand() % (GB - 2 * PAGE_SIZE);
+            accesses[i] = rand() % (GB);
         }
     }
 
@@ -106,45 +133,53 @@ int main(int argc, char** argv)
     clock_gettime(CLOCK_REALTIME, &n1);
 
     // Select random or sequential accesses
+    unsigned int sum = 0;
     if(rand_param == 0){
-        // printf("seq\n");
         seq_access();
     }
-    else if(rand_param == 1){
-        // printf("rand 1\n");
+    else if(rand_param == 1 || rand_param == 2){
         for(int i = 0; i < NUM_ACCESSES_RAND; i++){
             int access = accesses[i];
-            array[i] = 1;
+            sum += array[access];
         }
     }
     else {
-        // printf("rand 2\n");
-        for(int i = 0; i < NUM_ACCESSES_RAND; i++){
-            int access = accesses[i];
-            array[i] = 1;
-        }        
+        printf("Invalid Access Argument\n");
+        printf("Arg 2 - Type of Access:\n"
+                "\t 0 for sequential\n"
+                "\t 1 for random\n"
+                "\t 2 for semi-random\n");
+        return -1;       
     }
-
-
 
     // End timer
     clock_gettime(CLOCK_REALTIME, &n2);
-    munmap(array, GB - PAGE_SIZE);
 
     // Calculate total time
     uint64_t total_time = gettimediff(&n1, &n2);    
     uint64_t pwalk_time = syscall(PAGE_WALK_T);
     uint64_t fwalk_time = syscall(PAGE_FAULT_T);
+    uint64_t pmd_hits   = syscall(PMD_HITS, array);
+    uint64_t pmd_misses = syscall(PMD_MISSES, array);
+    uint64_t pud_hits   = syscall(PUD_HITS, array);
+    uint64_t pud_misses = syscall(PUD_MISSES, array);
+    uint64_t p4d_hits   = syscall(P4D_HITS, array);
+    uint64_t p4d_misses = syscall(P4D_MISSES, array);    
 
     double pwalk_frac = (double) pwalk_time / total_time;
     double fwalk_frac = (double) fwalk_time / total_time;
 
     printf( "Execution time: %lu ns\n"
-            "Partial walk time: %lu ns\n"
-            "Full walk time: %lu ns\n"
-            "Fraction spent on partial page walks: %lf\n"
-            "Fraction spent on faults excluding walks: %lf\n",
-            total_time, pwalk_time, fwalk_time, pwalk_frac, fwalk_frac);
+            "Page Walk time: %lu ns\n"
+            "PMD Hits: %lu\n"
+            "PMD Misses: %lu\n"
+            "PUD Hits: %lu\n"
+            "PUD Misses: %lu\n"
+            "P4D Hits: %lu\n"
+            "P4D Misses: %lu\n",
+            total_time, pwalk_time,
+            pmd_hits, pmd_misses, pud_hits, pud_misses, p4d_hits, p4d_misses);
 
-    return 0;
+    munmap(array, GB - PAGE_SIZE);
+    return sum;
 }

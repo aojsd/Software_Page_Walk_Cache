@@ -4,14 +4,17 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <sys/ipc.h>
 #include <sys/types.h>
-#include <sys/time.h>
+#include <time.h>
 #include <sys/wait.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
 
 
 //Add all your global variables and definitions here.
@@ -19,22 +22,38 @@
 #define BUFFER_SIZE 32
 #define SHMEM_KEY 1766
 
-double getdetlatimeofday(struct timeval *begin, struct timeval *end);
+#define MM_MULTI_ALLOC  336
+#define MM_PARAM_RESET  337
+#define VMA_EN_CACHE    338
+#define MMAP_TIMER      339
+#define PAGE_WALK_T     340
+#define PAGE_FAULT_T    341
+#define PMD_HITS        342
+#define PMD_MISSES      343
+#define PUD_HITS        344
+#define PUD_MISSES      345
+#define P4D_HITS        346
+#define P4D_MISSES      347
+
 void print_stats();
 int** makeMat(int rows, int cols);
 void populateMat(int** mat, int rows, int cols);
 int** transpose(int** mat1, int rows, int cols);
 
+struct timespec n1, n2;
+uint64_t total_time;
+int cache_en;
+int matrixSize;
+int procs;
+int **matA, **matB, **solutionMat;
 
-struct timeval tvalBefore, tvalAfter;
-
-
-
-/* Time function that calculates time between start and end */
-double getdetlatimeofday(struct timeval *begin, struct timeval *end)
+/////////////////////////////////////////////////////////
+// Provides elapsed Time between t1 and t2 in nanoseconds
+/////////////////////////////////////////////////////////
+uint64_t gettimediff(struct timespec *begin, struct timespec *end)
 {
-    return (end->tv_sec + end->tv_usec * 1.0 / 1000000) -
-           (begin->tv_sec + begin->tv_usec * 1.0 / 1000000);
+	return (end->tv_sec * 1000000000 + end->tv_nsec) -
+		(begin->tv_sec * 1000000000 + begin->tv_nsec);
 }
 
 
@@ -42,30 +61,89 @@ double getdetlatimeofday(struct timeval *begin, struct timeval *end)
  * to provide.
  */
 void print_stats() {
-	uint64_t total_time = getdetlatimeofday(&tvalBefore,&tvalAfter);
-	uint64_t pwalk_time = syscall(PARTIAL_WALK_T);
-    uint64_t fwalk_time = syscall(FULL_WALK_T);
+	uint64_t total_time = gettimediff(&n1, &n2);
+	uint64_t pwalk_time = syscall(PAGE_WALK_T);
+    uint64_t fwalk_time = syscall(PAGE_FAULT_T);
+    uint64_t pmd_hits   = 0;
+    uint64_t pmd_misses = 0;
+    uint64_t pud_hits   = 0;
+    uint64_t pud_misses = 0;
+    uint64_t p4d_hits   = 0;
+    uint64_t p4d_misses = 0;
 
     double pwalk_frac = (double) pwalk_time / total_time;
     double fwalk_frac = (double) fwalk_time / total_time;
 
+	for(int i = 0; i < matrixSize; i++){
+		pmd_hits += syscall(PMD_HITS, matA[i]);
+		pmd_hits += syscall(PMD_HITS, matB[i]);
+		pmd_hits += syscall(PMD_HITS, solutionMat[i]);
+		pmd_misses += syscall(PMD_MISSES, matA[i]);
+		pmd_misses += syscall(PMD_MISSES, matB[i]);
+		pmd_misses += syscall(PMD_MISSES, solutionMat[i]);
+
+		pud_hits += syscall(PUD_HITS, matA[i]);
+		pud_hits += syscall(PUD_HITS, matB[i]);
+		pud_hits += syscall(PUD_HITS, solutionMat[i]);
+		pud_misses += syscall(PUD_MISSES, matA[i]);
+		pud_misses += syscall(PUD_MISSES, matB[i]);
+		pud_misses += syscall(PUD_MISSES, solutionMat[i]);
+
+		p4d_hits += syscall(P4D_HITS, matA[i]);
+		p4d_hits += syscall(P4D_HITS, matB[i]);
+		p4d_hits += syscall(P4D_HITS, solutionMat[i]);
+		p4d_misses += syscall(P4D_MISSES, matA[i]);
+		p4d_misses += syscall(P4D_MISSES, matB[i]);
+		p4d_misses += syscall(P4D_MISSES, solutionMat[i]);				
+	}
+	pmd_hits += syscall(PMD_HITS, matA);
+	pmd_hits += syscall(PMD_HITS, matB);
+	pmd_hits += syscall(PMD_HITS, solutionMat);
+	pmd_misses += syscall(PMD_MISSES, matA);
+	pmd_misses += syscall(PMD_MISSES, matB);
+	pmd_misses += syscall(PMD_MISSES, solutionMat);
+
+	pud_hits += syscall(PUD_HITS, matA);
+	pud_hits += syscall(PUD_HITS, matB);
+	pud_hits += syscall(PUD_HITS, solutionMat);
+	pud_misses += syscall(PUD_MISSES, matA);
+	pud_misses += syscall(PUD_MISSES, matB);
+	pud_misses += syscall(PUD_MISSES, solutionMat);
+
+	p4d_hits += syscall(P4D_HITS, matA);
+	p4d_hits += syscall(P4D_HITS, matB);
+	p4d_hits += syscall(P4D_HITS, solutionMat);
+	p4d_misses += syscall(P4D_MISSES, matA);
+	p4d_misses += syscall(P4D_MISSES, matB);
+	p4d_misses += syscall(P4D_MISSES, solutionMat);		
+
     printf( "Execution time: %lu ns\n"
-            "Partial walk time: %lu ns\n"
-            "Full walk time: %lu ns\n"
-            "Fraction spent on partial page walks: %lf\n"
-            "Fraction spent on faults excluding walks: %lf\n",
-            total_time, pwalk_time, fwalk_time, pwalk_frac, fwalk_frac);
-
-
+            "Page Walk time: %lu ns\n"
+            "PMD Hits: %lu\n"
+            "PMD Misses: %lu\n"
+            "PUD Hits: %lu\n"
+            "PUD Misses: %lu\n"
+            "P4D Hits: %lu\n"
+            "P4D Misses: %lu\n",
+            total_time, pwalk_time,
+            pmd_hits, pmd_misses, pud_hits, pud_misses, p4d_hits, p4d_misses);
 }
 
 int** makeMat(int rows, int cols){
-
 	int i;
-	int** arr = (int**)malloc(rows*sizeof(int*));
-	for(i=0;i<rows;i++)
-		arr[i] =(int*) malloc(cols * sizeof(int));
-	
+    int** arr = (int**) syscall(MMAP_TIMER, NULL, (rows) * sizeof(int*),
+                        PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	if(cache_en){
+		syscall(VMA_EN_CACHE, arr);
+	}
+	for(i = 0; i < rows; i++){
+        arr[i] = (int*) syscall(MMAP_TIMER, NULL, (cols) * sizeof(int),
+                        PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+		if(cache_en){
+			syscall(VMA_EN_CACHE, arr[i]);
+		}						
+	}
+
 	return arr;
 
 }
@@ -88,7 +166,7 @@ int** transpose(int** mat1, int rows, int cols){
 			mat2[j][i] = mat1[i][j];
 	
 	for(i=0;i<rows;i++){
-		free(mat1[i]);
+		munmap(mat1[i], cols * sizeof(int));
 	}
 		
 	return mat2;
@@ -108,9 +186,7 @@ void childFunction(int** matA,int** matB, int i, int numProcs, int matrixSize){
 			for(z = 0; z< matrixSize; z++){
 				writeVal += matA[x][z] * matB[y][z];
 			}	
-      //printf("Value in process %d before write: arr[%d][%d] = %d \n",getpid(),x,y,writeVal);
 			sharedMatrix[x][y] = writeVal;
-			//printf("Value from process %d at shmem: arr[%d][%d] = %d \n",getpid(),x,y,sharedMatrix[x][y]);
 		}
 	}
 
@@ -121,9 +197,20 @@ void childFunction(int** matA,int** matB, int i, int numProcs, int matrixSize){
 
 int main(int argc, char const *argv[])
 {
-	
+    syscall(MM_PARAM_RESET);
 
-	int matrixSize = atoi(argv[1]);
+    if(argc != 4){
+        printf("Invalid Arguments\n");
+        printf("Arg 1 - Matrix Size\n");
+        printf("Arg 2 - Number of Processes\n");
+        printf("Arg 3 - Page Walk Cache Enable:\n"
+                "\t 0 for disable\n"
+                "\t 1 for enable\n");
+        return -1;
+    }
+	matrixSize = atoi(argv[1]);
+    procs = atoi(argv[2]);
+	cache_en = atoi(argv[3]);
 	
 	if (matrixSize > MATRIX_SIZE){
 		printf("The provided value was more than the testing limit. Size set to %d\n", MATRIX_SIZE);
@@ -136,52 +223,32 @@ int main(int argc, char const *argv[])
 	
 
 	srand(time(0));
-	int** matA = makeMat(matrixSize,matrixSize);
+	matA = makeMat(matrixSize,matrixSize);
 	populateMat(matA,matrixSize,matrixSize);
 
-	int** matB = makeMat(matrixSize,matrixSize);
+	matB = makeMat(matrixSize,matrixSize);
 	populateMat(matB,matrixSize,matrixSize);
 	int i,j;
 
+	solutionMat = makeMat(matrixSize,matrixSize);
 
-	printf("Matrix A:\n");
-	for(i=0;i<matrixSize;i++){
-		for(j=0;j<matrixSize;j++){
-			printf("%d ", matA[i][j]);
-		}
-		printf("\n");
-	}    
-
-	printf(" \n Matrix B:\n");
-	for(i=0;i<matrixSize;i++){
-		for(j=0;j<matrixSize;j++){
-			printf("%d ", matB[i][j]);
-		}
-		printf("\n");
-	}
-
-    gettimeofday (&tvalBefore, NULL);
-
-
-	  matB = transpose(matB,matrixSize,matrixSize);
-
-
-  	long numProcs = sysconf(_SC_NPROCESSORS_ONLN);
-	  //printf("Number of processors available: %d\n",numProcs);
-	
+  	long numProcs = procs; //sysconf(_SC_NPROCESSORS_ONLN);
 	
 	numProcs = numProcs>matrixSize ? matrixSize:numProcs;
 	pid_t* children = (pid_t*) malloc(sizeof(pid_t) * numProcs);
   
-  int shmid = shmget(SHMEM_KEY,sizeof(int[matrixSize][matrixSize]),0666|IPC_CREAT|IPC_PRIVATE); 
-  
-  if(shmid ==-1){
-    printf("Error on getting Shared memes \n");
-    exit(-1);
-  }
-  
-  int (*sharedMatrix)[matrixSize] ;
-  sharedMatrix = shmat(shmid,NULL,0);
+  	int shmid = shmget(SHMEM_KEY,sizeof(int[matrixSize][matrixSize]),0666|IPC_CREAT|IPC_PRIVATE); 
+	if(shmid ==-1){
+		printf("Error on getting Shared memes \n");
+		exit(-1);
+	}
+
+	int (*sharedMatrix)[matrixSize] ;
+	sharedMatrix = shmat(shmid,NULL,0);
+
+    clock_gettime(CLOCK_REALTIME, &n1);
+
+	matB = transpose(matB,matrixSize,matrixSize);
   
 	for(i=0;i<numProcs;i++){
 		pid_t child = fork();
@@ -189,59 +256,34 @@ int main(int argc, char const *argv[])
 			childFunction(matA, matB, i, numProcs, matrixSize);
 		}
 		else if ( child < 0){
-           		 printf("Could not create child\n");
-       	 	} else {
-            		children[i] = child;
-  
-            		//printf("I have created a child and its pid %d\n", child);
-        	}
+			printf("Could not create child\n");
+		} else {
+			children[i] = child;
+		}
 	}
  
   
-  for(i = 0; i < numProcs; i++){
-        int status;
-        waitpid(children[i], &status, 0);
-        //printf("Process %d exited with return code %d\n", children[i], WEXITSTATUS(status));
-  }
-
+	for(i = 0; i < numProcs; i++){
+		int status;
+		waitpid(children[i], &status, 0);
+	}
   
 	int x=0 ,y=0;
-	int** solutionMat = makeMat(matrixSize,matrixSize);
-
-  //by this point, all the threads have done their thing and now we must
-  // read from shared memory region.
-  for(x=0;x<matrixSize;x++){
-    for(y=0;y<matrixSize;y++){
-      solutionMat[x][y] = sharedMatrix[x][y];
-    }
-  }	
-
-  shmdt(sharedMatrix);
-  shmctl(shmid,IPC_RMID,NULL); 
-
-
-	gettimeofday (&tvalAfter, NULL);
-
-	
-	printf("\n MM Solution:\n");
-	for(i=0;i<matrixSize;i++){
-		for(j=0;j<matrixSize;j++){
-			printf("%d ", solutionMat[i][j]);
+	//by this point, all the threads have done their thing and now we must
+	// read from shared memory region.
+	for(x=0;x<matrixSize;x++){
+		for(y=0;y<matrixSize;y++){
+			solutionMat[x][y] = sharedMatrix[x][y];
 		}
-		printf("\n");
-	}    
+	}	
 
+    clock_gettime(CLOCK_REALTIME, &n2);
+
+	shmdt(sharedMatrix);
+	shmctl(shmid,IPC_RMID,NULL); 
+	
 	print_stats(); 
 
-  for(i=0;i<matrixSize;i++){
-		free(matA[i]);
-		free(matB[i]);
-		free(solutionMat[i]);
-	}
-	free(matA);
-	free(matB);
-	free(solutionMat);
-    
    return 0;
 }
 
