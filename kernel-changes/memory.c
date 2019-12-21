@@ -4201,11 +4201,19 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf)
 			return do_fault(vmf);
 	}
 
-	if (!pte_present(vmf->orig_pte))
+	if (!pte_present(vmf->orig_pte)){
+		if(vmf->vma->cache_vma){
+			printk("Swap\n");
+		}
 		return do_swap_page(vmf);
+	}
 
-	if (pte_protnone(vmf->orig_pte) && vma_is_accessible(vmf->vma))
+	if (pte_protnone(vmf->orig_pte) && vma_is_accessible(vmf->vma)){
+		if(vmf->vma->cache_vma){
+			printk("NUMA\n");
+		}
 		return do_numa_page(vmf);
+	}
 
 	vmf->ptl = pte_lockptr(vmf->vma->vm_mm, vmf->pmd);
 	spin_lock(vmf->ptl);
@@ -4213,8 +4221,9 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf)
 	if (unlikely(!pte_same(*vmf->pte, entry)))
 		goto unlock;
 	if (vmf->flags & FAULT_FLAG_WRITE) {
-		if (!pte_write(entry))
+		if (!pte_write(entry)){
 			return do_wp_page(vmf);
+		}
 		entry = pte_mkdirty(entry);
 	}
 	entry = pte_mkyoung(entry);
@@ -4299,7 +4308,7 @@ static vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 
 			/* Check that the cached page is valid, else invalidate cache entry */
 			if(vmf.pmd){
-				if( !(pmd_none(*vmf.pmd) || pmd_bad(*vmf.pmd)) ){
+				if( !pmd_bad(*vmf.pmd) ){
 					pmd_hit = 1;
 					goto check;
 				}				
@@ -4349,29 +4358,48 @@ pud_walk:
 	if (!vmf.pud)
 		return VM_FAULT_OOM;
 
-	/* OS Semester Project - Disallow huge pages for tests */
-	if (!vma->time_vma){
-		if (pud_none(*vmf.pud) && transparent_hugepage_enabled(vma)) {
-			ret = create_huge_pud(&vmf);
-			if (!(ret & VM_FAULT_FALLBACK))
-				return ret;
-		} else {
-			pud_t orig_pud = *vmf.pud;
+	if (pud_none(*vmf.pud) && transparent_hugepage_enabled(vma)) {
+		/* End page walk timer */
+		if(unlikely(vma->time_vma)){
+			ktime_get_real_ts(&t2);
+			time_taken = get_time_diff(&t1, &t2);
+			mm->page_walk_time += time_taken;
+		}
 
-			barrier();
-			if (pud_trans_huge(orig_pud) || pud_devmap(orig_pud)) {
-				/* NUMA case for anonymous PUDs would go here */
-				if (dirty && !pud_write(orig_pud)) {
-					ret = wp_huge_pud(&vmf, orig_pud);
-					if (!(ret & VM_FAULT_FALLBACK))
-						return ret;
-				} else {
-					huge_pud_set_accessed(&vmf, orig_pud);
-					return 0;
+		ret = create_huge_pud(&vmf);
+		if (!(ret & VM_FAULT_FALLBACK)){
+			// return ret;
+			goto finish;
+		}
+	} else {
+		pud_t orig_pud = *vmf.pud;
+
+		barrier();
+		if (pud_trans_huge(orig_pud) || pud_devmap(orig_pud)) {
+			/* End page walk timer */
+			if(unlikely(vma->time_vma)){
+				ktime_get_real_ts(&t2);
+				time_taken = get_time_diff(&t1, &t2);
+				mm->page_walk_time += time_taken;
+			}
+
+			/* NUMA case for anonymous PUDs would go here */
+			if (dirty && !pud_write(orig_pud)) {
+				ret = wp_huge_pud(&vmf, orig_pud);
+				if (!(ret & VM_FAULT_FALLBACK)){
+					// return ret;
+					goto finish;
 				}
+
+			} else {
+				huge_pud_set_accessed(&vmf, orig_pud);
+				ret = 0;
+				goto finish;
+				// return 0;
 			}
 		}
 	}
+
 pmd_walk:	
 	vmf.pmd = pmd_alloc(mm, vmf.pud, address);
 
@@ -4379,59 +4407,69 @@ check:
 	if (!vmf.pmd)
 		return VM_FAULT_OOM;
 
-	/* OS Semester Project - Disallow huge pages for tests */
-	if (!vma->time_vma){
-		if (pmd_none(*vmf.pmd) && transparent_hugepage_enabled(vma)) {
-			ret = create_huge_pmd(&vmf);
-			if (!(ret & VM_FAULT_FALLBACK))
-				return ret;
-		} else {
-			pmd_t orig_pmd = *vmf.pmd;
+	if (pmd_none(*vmf.pmd) && transparent_hugepage_enabled(vma)) {
+		/* End page walk timer */
+		if(unlikely(vma->time_vma)){
+			ktime_get_real_ts(&t2);
+			time_taken = get_time_diff(&t1, &t2);
+			mm->page_walk_time += time_taken;
+		}
 
-			barrier();
-			if (unlikely(is_swap_pmd(orig_pmd))) {
-				VM_BUG_ON(thp_migration_supported() &&
-						!is_pmd_migration_entry(orig_pmd));
-				if (is_pmd_migration_entry(orig_pmd))
-					pmd_migration_entry_wait(mm, vmf.pmd);
-				return 0;
+		ret = create_huge_pmd(&vmf);
+		if (!(ret & VM_FAULT_FALLBACK)){
+			goto finish;
+			// return ret;
+		}
+	} else {
+		pmd_t orig_pmd = *vmf.pmd;
+
+		barrier();
+		if (unlikely(is_swap_pmd(orig_pmd))) {
+			/* End page walk timer */
+			if(unlikely(vma->time_vma)){
+				ktime_get_real_ts(&t2);
+				time_taken = get_time_diff(&t1, &t2);
+				mm->page_walk_time += time_taken;
 			}
-			if (pmd_trans_huge(orig_pmd) || pmd_devmap(orig_pmd)) {
-				if (pmd_protnone(orig_pmd) && vma_is_accessible(vma)){
-					ret = do_huge_pmd_numa_page(&vmf, orig_pmd);
-					return ret;
+
+			VM_BUG_ON(thp_migration_supported() &&
+					!is_pmd_migration_entry(orig_pmd));
+			if (is_pmd_migration_entry(orig_pmd))
+				pmd_migration_entry_wait(mm, vmf.pmd);
+
+			ret = 0;
+			goto finish;
+		}
+		if (pmd_trans_huge(orig_pmd) || pmd_devmap(orig_pmd)) {
+			/* End page walk timer */
+			if(unlikely(vma->time_vma)){
+				ktime_get_real_ts(&t2);
+				time_taken = get_time_diff(&t1, &t2);
+				mm->page_walk_time += time_taken;
+			}
+
+			if (pmd_protnone(orig_pmd) && vma_is_accessible(vma)){
+				ret = do_huge_pmd_numa_page(&vmf, orig_pmd);
+				// return ret;
+				goto finish;
+			}
+			if (dirty && !pmd_write(orig_pmd)) {
+				ret = wp_huge_pmd(&vmf, orig_pmd);
+				if (!(ret & VM_FAULT_FALLBACK)){
+					// return ret;
+					goto finish;
 				}
-				if (dirty && !pmd_write(orig_pmd)) {
-					ret = wp_huge_pmd(&vmf, orig_pmd);
-					if (!(ret & VM_FAULT_FALLBACK)){
-						return ret;
-					}
-				} else {
-					huge_pmd_set_accessed(&vmf, orig_pmd);
-					return 0;
-				}
+			} else {
+				huge_pmd_set_accessed(&vmf, orig_pmd);
+				// return 0;
+				ret = 0;
+				goto finish;
 			}
 		}
 	}
 
-	/* End page walk timer */
-	if(unlikely(vma->time_vma)){
-		ktime_get_real_ts(&t2);
-		time_taken = get_time_diff(&t1, &t2);
-		mm->page_walk_time += time_taken;
-	}		
-
-	ret = handle_pte_fault(&vmf);
-
-	/* End page fault timer */
-	if(unlikely(vma->time_vma)){
-		ktime_get_real_ts(&t2);
-		time_taken = get_time_diff(&t1, &t2);
-		mm->page_fault_time += time_taken;
-	}
-
 	if(vma->cache_vma){
-		/* Update cache */
+		/* Update tags */
 		vma->pgd_tags[pgd_cache_index] = pgd_index;
 		vma->p4d_tags[p4d_cache_index] = p4d_index;
 		vma->pud_tags[pud_cache_index] = pud_index;
@@ -4455,6 +4493,23 @@ check:
 		vma->p4d_misses += (!p4d_hit && !pud_hit && !pmd_hit);
 
 		vma->last_addr = address;
+	}	
+
+	/* End page walk timer */
+	if(unlikely(vma->time_vma)){
+		ktime_get_real_ts(&t2);
+		time_taken = get_time_diff(&t1, &t2);
+		mm->page_walk_time += time_taken;
+	}
+
+	ret = handle_pte_fault(&vmf);
+
+finish:
+	/* End page fault timer */
+	if(unlikely(vma->time_vma)){
+		ktime_get_real_ts(&t2);
+		time_taken = get_time_diff(&t1, &t2);
+		mm->page_fault_time += time_taken;
 	}
 
 	return ret;

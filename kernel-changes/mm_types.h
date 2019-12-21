@@ -351,7 +351,6 @@ struct vm_area_struct {
 	unsigned long pud_misses;	
 	unsigned long p4d_hits;
 	unsigned long p4d_misses;
-
 	unsigned long last_addr;
 
 	/*
@@ -367,6 +366,7 @@ struct vm_area_struct {
 	/*
 	 * OS Semester Project Edit:	
 	 * Page table entry caches, holds memory addresses for pmds, puds, p4ds
+	 * Cache lock as well
 	 */
 	pmd_t *pmd_cache[PWC_ENTRIES];
 	pud_t *pud_cache[PWC_ENTRIES];
