@@ -19,8 +19,6 @@
 
 //Add all your global variables and definitions here.
 #define MATRIX_SIZE 1000
-#define BUFFER_SIZE 32
-#define SHMEM_KEY 1766
 
 #define MM_MULTI_ALLOC  336
 #define MM_PARAM_RESET  337
@@ -172,45 +170,20 @@ int** transpose(int** mat1, int rows, int cols){
 	return mat2;
 }
 
-void childFunction(int** matA,int** matB, int i, int numProcs, int matrixSize){
-	
-  int shmid = shmget(SHMEM_KEY,sizeof(int[matrixSize][matrixSize]),0666|IPC_CREAT);
-  int (*sharedMatrix)[matrixSize]; 
-  sharedMatrix = shmat(shmid,(void*)0,0); 
-
-	int x=0 ,y=0,z=0;
-	
-	for(x = i; x < matrixSize; x += numProcs){
-		for(y=0;y<matrixSize;y++){
-			int writeVal = 0;
-			for(z = 0; z< matrixSize; z++){
-				writeVal += matA[x][z] * matB[y][z];
-			}	
-			sharedMatrix[x][y] = writeVal;
-		}
-	}
-
-  shmdt(sharedMatrix);
-	exit(1);
-}
-
-
 int main(int argc, char const *argv[])
 {
     syscall(MM_PARAM_RESET);
 
-    if(argc != 4){
+    if(argc != 3){
         printf("Invalid Arguments\n");
         printf("Arg 1 - Matrix Size\n");
-        printf("Arg 2 - Number of Processes\n");
-        printf("Arg 3 - Page Walk Cache Enable:\n"
+        printf("Arg 2 - Page Walk Cache Enable:\n"
                 "\t 0 for disable\n"
                 "\t 1 for enable\n");
         return -1;
     }
 	matrixSize = atoi(argv[1]);
-    procs = atoi(argv[2]);
-	cache_en = atoi(argv[3]);
+	cache_en = atoi(argv[2]);
 	
 	if (matrixSize > MATRIX_SIZE){
 		printf("The provided value was more than the testing limit. Size set to %d\n", MATRIX_SIZE);
@@ -223,64 +196,28 @@ int main(int argc, char const *argv[])
 	
 
 	srand(time(0));
-	matA = makeMat(matrixSize,matrixSize);
-	populateMat(matA,matrixSize,matrixSize);
+	matA = makeMat(matrixSize, matrixSize);
+	populateMat(matA, matrixSize, matrixSize);
 
-	matB = makeMat(matrixSize,matrixSize);
-	populateMat(matB,matrixSize,matrixSize);
+	matB = makeMat(matrixSize, matrixSize);
+	populateMat(matB, matrixSize, matrixSize);
 	int i,j;
 
-	solutionMat = makeMat(matrixSize,matrixSize);
-
-  	long numProcs = procs; //sysconf(_SC_NPROCESSORS_ONLN);
-	
-	numProcs = numProcs>matrixSize ? matrixSize:numProcs;
-	pid_t* children = (pid_t*) malloc(sizeof(pid_t) * numProcs);
-  
-  	int shmid = shmget(SHMEM_KEY,sizeof(int[matrixSize][matrixSize]),0666|IPC_CREAT|IPC_PRIVATE); 
-	if(shmid ==-1){
-		printf("Error on getting Shared memes \n");
-		exit(-1);
-	}
-
-	int (*sharedMatrix)[matrixSize] ;
-	sharedMatrix = shmat(shmid,NULL,0);
+	solutionMat = makeMat(matrixSize, matrixSize);
 
     clock_gettime(CLOCK_REALTIME, &n1);
-
-	matB = transpose(matB,matrixSize,matrixSize);
   
-	for(i=0;i<numProcs;i++){
-		pid_t child = fork();
-		if(child == 0){
-			childFunction(matA, matB, i, numProcs, matrixSize);
-		}
-		else if ( child < 0){
-			printf("Could not create child\n");
-		} else {
-			children[i] = child;
-		}
-	}
- 
-  
-	for(i = 0; i < numProcs; i++){
-		int status;
-		waitpid(children[i], &status, 0);
-	}
-  
-	int x=0 ,y=0;
-	//by this point, all the threads have done their thing and now we must
-	// read from shared memory region.
-	for(x=0;x<matrixSize;x++){
-		for(y=0;y<matrixSize;y++){
-			solutionMat[x][y] = sharedMatrix[x][y];
+	for(int x = 0; x < matrixSize; x++){
+		for(int y = 0; y < matrixSize; y++){
+			int val = 0;
+			for(int z = 0; z < matrixSize; z++){
+				val += matA[x][z] * matB[z][y];
+			}
+			solutionMat[x][y] = val;
 		}
 	}	
 
     clock_gettime(CLOCK_REALTIME, &n2);
-
-	shmdt(sharedMatrix);
-	shmctl(shmid,IPC_RMID,NULL); 
 	
 	print_stats(); 
 
