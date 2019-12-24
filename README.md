@@ -1,4 +1,5 @@
 CS519 Semeseter Project - Accelerating Software Page Table Walks
+Micheal Wu (mw811) & Parth A. Patel (pap223)
 
 Setup:
 1) Run kernel-setup.sh [Path to kernel source tree]
