@@ -1,4 +1,5 @@
 CS519 Semeseter Project - Accelerating Software Page Table Walks
+Micheal Wu (mw811) & Parth A. Patel (pap223)
 
 Setup:
 1) Run kernel-setup.sh [Path to kernel source tree]
@@ -8,6 +9,8 @@ Setup:
   NOTE: All KERNEL CHANGES WERE MADE TO VERSION 4.19.80, MAY NOT COMPILE WITH OTHER VERSIONS
   
 2) Run 'make' in both pagefault-test/ and matrix-multiply/, and insert the produced executables into the target VM
+
+  NOTE: COMPILED WITH GNU11
 
 Testing:
 1) pagefault-test
